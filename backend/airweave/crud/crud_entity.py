@@ -95,5 +95,15 @@ class CRUDEntity(CRUDBaseOrganization[Entity, EntityCreate, EntityUpdate]):
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_sync_id(
+        self,
+        db: AsyncSession,
+        sync_id: UUID,
+    ) -> list[Entity]:
+        """Get all entities for a specific sync."""
+        stmt = select(Entity).where(Entity.sync_id == sync_id)
+        result = await db.execute(stmt)
+        return list(result.unique().scalars().all())
+
 
 entity = CRUDEntity()

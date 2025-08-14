@@ -333,7 +333,7 @@ class EntityProcessor:
         self,
         parent_entity: BaseEntity,
         processed_entities: List[BaseEntity],
-        db_entity: schemas.Entity,
+        db_entity: Optional[schemas.Entity],
         action: DestinationAction,
         sync_context: SyncContext,
     ) -> None:
@@ -342,7 +342,7 @@ class EntityProcessor:
         Args:
             parent_entity: The parent entity of the processed entities
             processed_entities: The entities to persist
-            db_entity: The database entity to update
+            db_entity: The database entity to update (None for INSERT actions)
             action: The action to take
             sync_context: The sync context
         """
@@ -768,3 +768,67 @@ class EntityProcessor:
         sync_context.logger.debug(
             f"✅ UPDATE_COMPLETE [{entity_context}] Update complete in {total_elapsed:.3f}s"
         )
+
+    async def cleanup_orphaned_entities(self, sync_context: SyncContext) -> None:
+        """Clean up orphaned entities that exist in the database but weren't encountered during sync."""
+        sync_context.logger.info("🧹 Starting cleanup of orphaned entities")
+        
+        try:
+            async with get_db_context() as db:
+                # Get all entities currently stored for this sync (by sync_id, not sync_job_id)
+                stored_entities = await crud.entity.get_by_sync_id(
+                    db=db, sync_id=sync_context.sync.id
+                )
+                
+                if not stored_entities:
+                    sync_context.logger.info("🧹 No stored entities found, nothing to clean up")
+                    return
+                
+                # Find orphaned entities (stored but not encountered)
+                orphaned_entities = []
+                for stored_entity in stored_entities:
+                    # Check if entity_id exists in any of the node sets
+                    entity_was_encountered = any(
+                        stored_entity.entity_id in entity_set 
+                        for entity_set in self._entities_encountered_count.values()
+                    )
+                    if not entity_was_encountered:
+                        orphaned_entities.append(stored_entity)
+                
+                if not orphaned_entities:
+                    sync_context.logger.info("🧹 No orphaned entities found")
+                    return
+                
+                sync_context.logger.info(f"🧹 Found {len(orphaned_entities)} orphaned entities to delete")
+                
+                # Delete from destinations first
+                for destination in sync_context.destinations:
+                    for orphaned_entity in orphaned_entities:
+                        try:
+                            await destination.delete(orphaned_entity.id)
+                        except Exception as e:
+                            sync_context.logger.warning(
+                                f"⚠️ Failed to delete orphaned entity {orphaned_entity.entity_id} "
+                                f"from destination: {e}"
+                            )
+                
+                # Delete from database
+                for orphaned_entity in orphaned_entities:
+                    try:
+                        await crud.entity.remove(db=db, id=orphaned_entity.id, ctx=sync_context.ctx)
+                    except Exception as e:
+                        sync_context.logger.warning(
+                            f"⚠️ Failed to delete orphaned entity {orphaned_entity.entity_id} "
+                            f"from database: {e}"
+                        )
+                
+                # Update progress tracking
+                await sync_context.progress.increment("deleted", len(orphaned_entities))
+                
+                sync_context.logger.info(
+                    f"✅ Cleanup complete: deleted {len(orphaned_entities)} orphaned entities"
+                )
+                
+        except Exception as e:
+            sync_context.logger.error(f"💥 Cleanup failed: {str(e)}", exc_info=True)
+            # Don't raise - cleanup failure shouldn't fail the entire sync
