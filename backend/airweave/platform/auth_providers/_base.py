@@ -53,3 +53,15 @@ class BaseAuthProvider(ABC):
             source_auth_config_fields: The fields required for the source auth config
         """
         pass
+
+    @abstractmethod
+    async def can_handle_source(self, source_short_name: str) -> bool:
+        """Check if this auth provider can handle the given source.
+
+        Args:
+            source_short_name: The source to check (e.g., 'github', 'slack')
+
+        Returns:
+            True if this provider can handle the source, False otherwise
+        """
+        pass

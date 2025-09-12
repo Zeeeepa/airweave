@@ -137,30 +137,30 @@ async def create(
         await guard_rail.is_allowed(ActionType.SYNCS)
         await guard_rail.is_allowed(ActionType.ENTITIES)
 
-    # Temporary: Block certain sources from being created with auth providers
-    SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
-        "confluence",
-        "jira",
-        "bitbucket",
-        "github",
-        "ctti",
-        "monday",
-        "postgresql",
-    ]
+    # # Temporary: Block certain sources from being created with auth providers
+    # SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
+    #     "confluence",
+    #     "jira",
+    #     "bitbucket",
+    #     "github",
+    #     "ctti",
+    #     "monday",
+    #     "postgresql",
+    # ]
 
-    if (
-        source_connection_in.auth_provider
-        and source_connection_in.short_name in SOURCES_BLOCKED_FROM_AUTH_PROVIDERS
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"The {source_connection_in.short_name.title()} source cannot currently be created "
-                f"using auth providers. Please provide credentials directly using the 'auth_fields'"
-                f" parameter instead. Support for {source_connection_in.short_name.title()} through"
-                f" auth providers is coming soon."
-            ),
-        )
+    # if (
+    #     source_connection_in.auth_provider
+    #     and source_connection_in.short_name in SOURCES_BLOCKED_FROM_AUTH_PROVIDERS
+    # ):
+    #     raise HTTPException(
+    #         status_code=422,
+    #         detail=(
+    #             f"The {source_connection_in.short_name.title()} source cannot currently be created "
+    #             f"using auth providers. Please provide credentials directly using the 'auth_fields'"
+    #             f" parameter instead. Support for {source_connection_in.short_name.title()} through"
+    #             f" auth providers is coming soon."
+    #         ),
+    #     )
 
     # Store whether we're creating a new collection
     creating_new_collection = source_connection_in.collection is None
@@ -354,29 +354,29 @@ async def _validate_continuous_source(
             ),
         )
 
-    # Block auth providers for now (same as regular endpoint)
-    SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
-        "confluence",
-        "jira",
-        "bitbucket",
-        "github",
-        "ctti",
-        "monday",
-        "postgresql",
-    ]
+    # # Block auth providers for now (same as regular endpoint)
+    # SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
+    #     "confluence",
+    #     "jira",
+    #     "bitbucket",
+    #     "github",
+    #     "ctti",
+    #     "monday",
+    #     "postgresql",
+    # ]
 
-    if (
-        source_connection_in.auth_provider
-        and source_connection_in.short_name in SOURCES_BLOCKED_FROM_AUTH_PROVIDERS
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"The {source_connection_in.short_name.title()} source cannot currently "
-                f"be created using auth providers. Please provide credentials directly "
-                f"using the 'auth_fields' parameter instead."
-            ),
-        )
+    # if (
+    #     source_connection_in.auth_provider
+    #     and source_connection_in.short_name in SOURCES_BLOCKED_FROM_AUTH_PROVIDERS
+    # ):
+    #     raise HTTPException(
+    #         status_code=422,
+    #         detail=(
+    #             f"The {source_connection_in.short_name.title()} source cannot currently "
+    #             f"be created using auth providers. Please provide credentials directly "
+    #             f"using the 'auth_fields' parameter instead."
+    #         ),
+    #     )
 
 
 async def _determine_cursor_field(

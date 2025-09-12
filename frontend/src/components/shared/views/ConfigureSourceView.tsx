@@ -57,17 +57,10 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
         viewData.credentialId || null
     );
 
-    // Sources that are temporarily blocked from using auth providers
-    // This should match the backend list in source_connections.py
-    const SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
-        "confluence",
-        "jira",
-        "bitbucket",
-        "github",
-        "ctti",
-        "monday",
-        "postgresql"
-    ];
+    // State for auth provider capabilities
+    const [availableAuthProviders, setAvailableAuthProviders] = useState<any[]>([]);
+    const [authProviderCapabilities, setAuthProviderCapabilities] = useState<Record<string, boolean>>({});
+    const [isLoadingCapabilities, setIsLoadingCapabilities] = useState(false);
 
     // Use auth providers store
     const {
@@ -90,6 +83,17 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
     const isTokenField = (fieldName: string): boolean => {
         const lowerName = fieldName.toLowerCase();
         return lowerName === 'refresh_token' || lowerName === 'access_token';
+    };
+
+    // Helper function to check if a field is provided by the auth provider
+    const isProvidedByAuthProvider = (fieldName: string): boolean => {
+        if (!useExternalAuthProvider || !selectedAuthProviderConnection) {
+            return false;
+        }
+
+        // Fields that are typically provided by auth providers
+        const authProviderFields = ['personal_access_token', 'access_token', 'api_key'];
+        return authProviderFields.includes(fieldName);
     };
 
     // Helper function to strip whitespace from string values
@@ -162,15 +166,80 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
         fetchAuthProviderConnections();
     }, [fetchAuthProviderConnections]);
 
-    // Ensure external auth provider is disabled for blocked sources
+    // Check auth provider capabilities for the current source
+    const checkAuthProviderCapabilities = async (sourceShortName: string) => {
+        if (!sourceShortName) return;
+
+        setIsLoadingCapabilities(true);
+        try {
+            // Fetch available auth providers
+            const response = await apiClient.get('/auth-providers/list');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch auth providers: ${response.status}`);
+            }
+
+            const providers = await response.json();
+            setAvailableAuthProviders(providers);
+
+            // Check capabilities using hardcoded mappings (since backend endpoint was rejected)
+            const capabilities: Record<string, boolean> = {};
+
+            // Composio supported sources
+            const composioSupported = {
+                "github": true, "confluence": true, "jira": true, "bitbucket": true,
+                "monday": true, "ctti": true, "slack": true, "gmail": true,
+                "google_drive": true, "google_calendar": true, "asana": true,
+                "clickup": true, "dropbox": true, "elasticsearch": true,
+                "notion": true, "todoist": true, "trello": true, "zendesk": true,
+                "postgresql": false,
+            };
+
+            // Pipedream supported sources
+            const pipedreamSupported = {
+                "github": true, "confluence": true, "jira": true, "bitbucket": true,
+                "monday": true, "postgresql": true, "ctti": true, "slack": true,
+                "gmail": true, "google_drive": true, "google_calendar": true,
+                "asana": true, "clickup": true, "dropbox": true, "elasticsearch": true,
+                "notion": true, "todoist": true, "trello": true, "zendesk": true,
+            };
+
+            providers.forEach((provider: any) => {
+                if (provider.short_name === 'composio') {
+                    capabilities[provider.short_name] = composioSupported[sourceShortName] || false;
+                } else if (provider.short_name === 'pipedream') {
+                    capabilities[provider.short_name] = pipedreamSupported[sourceShortName] || false;
+                } else {
+                    capabilities[provider.short_name] = false;
+                }
+            });
+
+            setAuthProviderCapabilities(capabilities);
+            console.log(`✅ [DEBUG] Auth provider capabilities for ${sourceShortName}:`, capabilities);
+
+        } catch (error) {
+            console.error('Error checking auth provider capabilities:', error);
+            setAuthProviderCapabilities({});
+        } finally {
+            setIsLoadingCapabilities(false);
+        }
+    };
+
+    // Check capabilities when source changes
     useEffect(() => {
-        if (sourceShortName && SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceShortName)) {
-            setUseExternalAuthProvider(false);
-            setSelectedAuthProviderConnection(null);
-            setAuthProviderDetails(null);
-            setAuthProviderConfigValues({});
+        if (sourceShortName) {
+            checkAuthProviderCapabilities(sourceShortName);
         }
     }, [sourceShortName]);
+
+    // // Ensure external auth provider is disabled for blocked sources
+    // useEffect(() => {
+    //     if (sourceShortName && SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceShortName)) {
+    //         setUseExternalAuthProvider(false);
+    //         setSelectedAuthProviderConnection(null);
+    //         setAuthProviderDetails(null);
+    //         setAuthProviderConfigValues({});
+    //     }
+    // }, [sourceShortName]);
 
     // Fetch auth provider details when a connection is selected
     const fetchAuthProviderDetails = async (connection: any) => {
@@ -758,10 +827,12 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
 
     // Render the auth fields step
     const renderAuthStep = () => {
-        // Check if there are any visible auth fields
+        // Check if there are any visible auth fields (excluding those provided by auth provider)
         const hasVisibleAuthFields = sourceDetails?.auth_fields?.fields &&
             sourceDetails.auth_fields.fields.some((field: any) =>
-                field.name && !isTokenField(field.name)
+                field.name &&
+                !isTokenField(field.name) &&
+                !isProvidedByAuthProvider(field.name)
             );
 
         return (
@@ -848,8 +919,8 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
                     </div>
                 </div>
 
-                {/* External Auth Provider Toggle - Separate Section */}
-                {!SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceShortName) && (
+                {/* External Auth Provider Toggle - Separate Section - Only show if there are auth providers that can handle this source */}
+                {!isLoadingCapabilities && Object.values(authProviderCapabilities).some(canHandle => canHandle) && (
                     <div className="bg-muted p-6 rounded-lg mb-4">
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
@@ -883,64 +954,83 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
                             {/* Show auth provider connections when toggle is on */}
                             {useExternalAuthProvider && (
                                 <div className="space-y-3 mt-4">
-                                    {isLoadingConnections ? (
+                                    {isLoadingCapabilities ? (
                                         <div className="flex justify-center py-4">
                                             <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div>
                                         </div>
-                                    ) : authProviderConnections.length > 0 ? (
+                                    ) : Object.values(authProviderCapabilities).some(canHandle => canHandle) ? (
                                         <>
                                             <p className="text-sm text-muted-foreground mb-2">
-                                                Select a connected auth provider
+                                                Select an auth provider that supports {sourceShortName}
                                             </p>
 
                                             {/* Show error if validation attempted and no provider selected */}
                                             {validationAttempted && !selectedAuthProviderConnection && (
                                                 <div className="mb-2 p-2 bg-red-500/10 rounded border border-red-500/20">
                                                     <p className="text-xs text-red-600">
-                                                        Please select a connected auth provider
+                                                        Please select an auth provider
                                                     </p>
                                                 </div>
                                             )}
 
                                             <div className="space-y-2">
-                                                {authProviderConnections.map((connection) => (
-                                                    <div
-                                                        key={connection.id}
-                                                        className={cn(
-                                                            "h-10 flex items-center gap-2 overflow-hidden px-3 py-2 rounded-md cursor-pointer transition-colors",
-                                                            selectedAuthProviderConnection?.id === connection.id
-                                                                ? "border-2 border-primary"
-                                                                : isDark
-                                                                    ? "border border-gray-700 bg-gray-800/50 hover:bg-gray-700/70"
-                                                                    : "border border-gray-200 bg-white hover:bg-gray-50"
-                                                        )}
-                                                        onClick={() => handleAuthProviderConnectionSelect(connection)}
-                                                    >
-                                                        <div className="rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
-                                                            <img
-                                                                src={getAuthProviderIconUrl(connection.short_name, resolvedTheme)}
-                                                                alt={connection.name}
-                                                                className="h-6 w-6 object-contain"
-                                                                onError={(e) => {
-                                                                    // Fallback to initials if icon fails
-                                                                    e.currentTarget.style.display = 'none';
-                                                                    const colorClass = connection.short_name.charCodeAt(0) % 8;
-                                                                    const colors = [
-                                                                        "bg-blue-500", "bg-green-500", "bg-purple-500", "bg-orange-500",
-                                                                        "bg-pink-500", "bg-indigo-500", "bg-red-500", "bg-yellow-500"
-                                                                    ];
-                                                                    e.currentTarget.parentElement!.classList.add(colors[colorClass]);
-                                                                    e.currentTarget.parentElement!.innerHTML = `<span class="text-white font-semibold text-xs">${connection.short_name.substring(0, 2).toUpperCase()}</span>`;
+                                                {availableAuthProviders
+                                                    .filter(provider => authProviderCapabilities[provider.short_name])
+                                                    .map((provider) => {
+                                                        // Check if this provider is already connected
+                                                        const connectedProvider = authProviderConnections.find(conn => conn.short_name === provider.short_name);
+
+                                                        return (
+                                                            <div
+                                                                key={provider.short_name}
+                                                                className={cn(
+                                                                    "h-10 flex items-center gap-2 overflow-hidden px-3 py-2 rounded-md cursor-pointer transition-colors",
+                                                                    selectedAuthProviderConnection?.short_name === provider.short_name
+                                                                        ? "border-2 border-primary"
+                                                                        : isDark
+                                                                            ? "border border-gray-700 bg-gray-800/50 hover:bg-gray-700/70"
+                                                                            : "border border-gray-200 bg-white hover:bg-gray-50"
+                                                                )}
+                                                                onClick={() => {
+                                                                    if (connectedProvider) {
+                                                                        handleAuthProviderConnectionSelect(connectedProvider);
+                                                                    } else {
+                                                                        // Navigate to auth provider setup
+                                                                        navigate(`/auth-providers/configure/${provider.short_name}`);
+                                                                    }
                                                                 }}
-                                                            />
-                                                        </div>
-                                                        <div className="flex-1 min-w-0">
-                                                            <span className="text-sm font-medium truncate block">
-                                                                {connection.name}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                ))}
+                                                            >
+                                                                <div className="rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
+                                                                    <img
+                                                                        src={getAuthProviderIconUrl(provider.short_name, resolvedTheme)}
+                                                                        alt={provider.name}
+                                                                        className="h-6 w-6 object-contain"
+                                                                        onError={(e) => {
+                                                                            // Fallback to initials if icon fails
+                                                                            e.currentTarget.style.display = 'none';
+                                                                            const colorClass = provider.short_name.charCodeAt(0) % 8;
+                                                                            const colors = [
+                                                                                "bg-blue-500", "bg-green-500", "bg-purple-500", "bg-orange-500",
+                                                                                "bg-pink-500", "bg-indigo-500", "bg-red-500", "bg-yellow-500"
+                                                                            ];
+                                                                            e.currentTarget.parentElement!.classList.add(colors[colorClass]);
+                                                                            e.currentTarget.parentElement!.innerHTML = `<span class="text-white font-semibold text-xs">${provider.short_name.substring(0, 2).toUpperCase()}</span>`;
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <span className="text-sm font-medium truncate block">
+                                                                        {provider.name}
+                                                                    </span>
+                                                                    {connectedProvider ? (
+                                                                        <span className="text-xs text-green-600">Connected</span>
+                                                                    ) : (
+                                                                        <span className="text-xs text-blue-600">Click to set up</span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
                                             </div>
 
                                             {/* Show config fields when an auth provider is selected */}
@@ -1056,11 +1146,15 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
                 )}
 
                 {/* Auth fields section - if any */}
-                {hasVisibleAuthFields && !useExternalAuthProvider && (
+                {hasVisibleAuthFields && (
                     <div className="bg-muted p-6 rounded-lg mb-4">
-                        {/* Render auth fields (excluding token fields) */}
+                        {/* Render auth fields (excluding token fields and fields provided by auth provider) */}
                         {sourceDetails.auth_fields.fields
-                            .filter((field: any) => field.name && !isTokenField(field.name))
+                            .filter((field: any) =>
+                                field.name &&
+                                !isTokenField(field.name) &&
+                                !isProvidedByAuthProvider(field.name)
+                            )
                             .map((field: any) => (
                                 <div key={field.name} className="space-y-2 mb-4">
                                     <label className="text-base font-medium">

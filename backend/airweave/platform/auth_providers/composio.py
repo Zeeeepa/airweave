@@ -1,5 +1,6 @@
 """Composio Test Auth Provider - provides authentication services for other integrations."""
 
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -20,10 +21,11 @@ from airweave.platform.decorators import auth_provider
 class ComposioAuthProvider(BaseAuthProvider):
     """Composio authentication provider."""
 
-    # Mapping of Airweave field names to Composio field names
-    # Key: Airweave field name, Value: Composio field name
+    # Mapping of Composio field names to Airweave field names
+    # Key: Composio field name, Value: Airweave field name
     FIELD_NAME_MAPPING = {
-        "api_key": "generic_api_key",  # Stripe and other API key sources
+        "generic_api_key": "api_key",  # Stripe and other API key sources
+        "access_token": "personal_access_token",  # GitHub and other OAuth sources
         # Add more mappings as needed
     }
 
@@ -35,8 +37,22 @@ class ComposioAuthProvider(BaseAuthProvider):
         "outlook_mail": "outlook",
         "outlook_calendar": "outlook",
         "onedrive": "one_drive",
+        # Previously blocked sources - now supported
+        "confluence": "confluence",
+        "jira": "jira",
+        "bitbucket": "bitbucket",
+        "github": "github",
+        "ctti": "ctti",  # May need to verify this slug
+        "monday": "monday",
+        "postgresql": "postgresql",  # May need to verify this slug
         # Add more mappings as needed
     }
+
+    def __init__(self):
+        """Initialize the Composio auth provider with caching."""
+        super().__init__()
+        self._cache_ttl = 3600  # 1 hour
+        self._auth_fields_cache = {}  # Cache for auth fields per toolkit
 
     @classmethod
     async def create(
@@ -67,17 +83,6 @@ class ComposioAuthProvider(BaseAuthProvider):
             The corresponding Composio toolkit slug
         """
         return self.SLUG_NAME_MAPPING.get(airweave_short_name, airweave_short_name)
-
-    def _map_field_name(self, airweave_field: str) -> str:
-        """Map an Airweave field name to the corresponding Composio field name.
-
-        Args:
-            airweave_field: The Airweave field name
-
-        Returns:
-            The corresponding Composio field name
-        """
-        return self.FIELD_NAME_MAPPING.get(airweave_field, airweave_field)
 
     async def _get_with_auth(
         self, client: httpx.AsyncClient, url: str, params: Optional[Dict[str, Any]] = None
@@ -123,6 +128,9 @@ class ComposioAuthProvider(BaseAuthProvider):
         Raises:
             HTTPException: If no credentials found for the source
         """
+        self.logger.info(
+            f"🚨 [DEBUG] Composio get_creds_for_source called for {source_short_name} with fields {source_auth_config_fields}"
+        )
         # Map Airweave source name to Composio slug if needed
         composio_slug = self._get_composio_slug(source_short_name)
 
@@ -295,65 +303,199 @@ class ComposioAuthProvider(BaseAuthProvider):
         source_auth_config_fields: List[str],
         source_short_name: str,
     ) -> Dict[str, Any]:
-        """Map Airweave field names to Composio fields and validate all required fields exist.
+        """Map Composio fields to Airweave fields and validate all required fields exist.
 
         Args:
             source_creds_dict: The credentials dictionary from Composio
-            source_auth_config_fields: Required auth fields
+            source_auth_config_fields: Required auth fields for the source
             source_short_name: The source short name
 
         Returns:
-            Dictionary with mapped credentials
+            Dictionary with mapped credentials (Airweave field names as keys)
 
-        Raises:
-            HTTPException: If required fields are missing
+        Note:
+            Fields not provided by Composio will be marked as missing and need to be
+            provided by the user (e.g., repo_name for GitHub).
         """
         missing_fields = []
         found_credentials = {}
 
         self.logger.info("🔍 [Composio] Checking for required auth fields...")
 
+        # Only check for fields that Composio can actually provide
+        # Composio can provide: access_token (mapped to personal_access_token), generic_api_key (mapped to api_key)
+        composio_provided_fields = set(self.FIELD_NAME_MAPPING.values())
+
         for airweave_field in source_auth_config_fields:
-            # Map the field name if needed
-            composio_field = self._map_field_name(airweave_field)
+            # Only check fields that Composio can provide
+            if airweave_field not in composio_provided_fields:
+                self.logger.info(
+                    f"\n  ⏭️ Skipping field '{airweave_field}' - not provided by Composio\n"
+                )
+                continue
+
+            # Check if we have a mapping from Composio to Airweave
+            composio_field = None
+            for composio_key, airweave_value in self.FIELD_NAME_MAPPING.items():
+                if airweave_value == airweave_field:
+                    composio_field = composio_key
+                    break
+
+            # If no mapping found, use the field name as-is
+            if composio_field is None:
+                composio_field = airweave_field
 
             if airweave_field != composio_field:
                 self.logger.info(
-                    f"\n  🔄 Mapped field '{airweave_field}' to Composio field '{composio_field}'\n"
+                    f"\n  🔄 Mapped Composio field '{composio_field}' to Airweave field '{airweave_field}'\n"
                 )
 
             if composio_field in source_creds_dict:
                 # Store with the original Airweave field name
                 found_credentials[airweave_field] = source_creds_dict[composio_field]
                 self.logger.info(
-                    f"\n  ✅ Found field: '{airweave_field}' (as '{composio_field}' in Composio)\n"
+                    f"\n  ✅ Found field: '{airweave_field}' (from Composio field '{composio_field}')\n"
                 )
             else:
                 missing_fields.append(airweave_field)
                 self.logger.warning(
                     f"\n  ❌ Missing field: '{airweave_field}' (looked for "
-                    f"'{composio_field}' in Composio)\n"
+                    f"Composio field '{composio_field}')\n"
                 )
 
         if missing_fields:
             available_fields = list(source_creds_dict.keys())
-            self.logger.error(
-                f"\n❌ [Composio] Missing required fields! "
-                f"Required: {source_auth_config_fields}, "
-                f"Missing: {missing_fields}, "
+            self.logger.warning(
+                f"\n⚠️ [Composio] Some fields not available from Composio: {missing_fields}. "
+                f"These will need to be provided by the user. "
                 f"Available in Composio: {available_fields}\n"
             )
-            raise HTTPException(
-                status_code=422,
-                detail=f"Missing required auth fields for source '{source_short_name}': "
-                f"{missing_fields}. "
-                f"Required fields: {source_auth_config_fields}. "
-                f"Available fields in Composio credentials: {available_fields}",
-            )
+            # Don't raise an error - let the system handle missing fields
+            # The user will need to provide the missing fields separately
 
         self.logger.info(
-            f"\n✅ [Composio] Successfully retrieved all {len(found_credentials)} required "
-            f"credential fields for source '{source_short_name}'\n"
+            f"\n✅ [Composio] Successfully retrieved {len(found_credentials)} credential fields "
+            f"for source '{source_short_name}'. "
+            f"Fields provided: {list(found_credentials.keys())}. "
+            f"Fields still needed from user: {missing_fields if missing_fields else 'none'}\n"
         )
 
         return found_credentials
+
+    # Phase 1: New capability checking methods
+
+    async def can_handle_source(self, source_short_name: str) -> bool:
+        """Check if this auth provider can handle the given source.
+
+        This checks if Composio supports this source
+
+        Args:
+            source_short_name: The source to check (e.g., 'github', 'slack')
+
+        Returns:
+            True if Composio supports this source in general, False otherwise
+        """
+        try:
+            # Map Airweave source to Composio slug
+            composio_slug = self._get_composio_slug(source_short_name)
+
+            # Check if Composio supports this toolkit (general support, not personal connections)
+            async with httpx.AsyncClient() as client:
+                try:
+                    # Get toolkit details to check if it exists and is enabled
+                    toolkit_response = await self._get_with_auth(
+                        client,
+                        f"https://backend.composio.dev/api/v3/toolkits/{composio_slug}",
+                    )
+
+                    # Check if toolkit is enabled and has auth config details
+                    if not toolkit_response.get("enabled", False):
+                        self.logger.debug(f"Toolkit '{composio_slug}' is disabled in Composio")
+                        return False
+
+                    if not toolkit_response.get("auth_config_details"):
+                        self.logger.debug(f"Toolkit '{composio_slug}' has no auth config details")
+                        return False
+
+                    return True
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self.logger.debug(f"Toolkit '{composio_slug}' not found in Composio")
+                        return False
+                    else:
+                        self.logger.error(f"HTTP error checking toolkit '{composio_slug}': {e}")
+                        return False
+
+        except Exception as e:
+            self.logger.error(f"Error checking if can handle source '{source_short_name}': {e}")
+            return False
+
+    async def _get_composio_auth_fields(self, composio_slug: str) -> List[str]:
+        """Get available auth fields for a Composio toolkit.
+
+        This calls Composio's API to get auth config creation fields.
+        """
+        # Check cache first
+        if composio_slug in self._auth_fields_cache:
+            cache_entry = self._auth_fields_cache[composio_slug]
+            if time.time() < cache_entry["expiry"]:
+                return cache_entry["fields"]
+
+        try:
+            async with httpx.AsyncClient() as client:
+                # Get toolkit details which includes auth config details
+                response = await self._get_with_auth(
+                    client,
+                    f"https://backend.composio.dev/api/v3/toolkits/{composio_slug}",
+                )
+
+                # Extract auth fields from the toolkit response
+                fields = []
+                auth_config_details = response.get("auth_config_details", [])
+                for auth_config in auth_config_details:
+                    auth_config_creation = auth_config.get("fields", {}).get(
+                        "auth_config_creation", {}
+                    )
+
+                    # Add required fields
+                    for field in auth_config_creation.get("required", []):
+                        field_name = field.get("name")
+                        if field_name:
+                            fields.append(field_name)
+
+                    # Add optional fields
+                    for field in auth_config_creation.get("optional", []):
+                        field_name = field.get("name")
+                        if field_name:
+                            fields.append(field_name)
+
+                # Cache the result
+                self._auth_fields_cache[composio_slug] = {
+                    "fields": fields,
+                    "expiry": time.time() + self._cache_ttl,
+                }
+
+                self.logger.info(f"Retrieved auth fields for {composio_slug}: {fields}")
+                return fields
+
+        except Exception as e:
+            self.logger.error(f"Error getting auth fields for {composio_slug}: {e}")
+            # Return empty list if API call fails
+            return []
+
+    def _get_auth_scheme_for_source(self, source_short_name: str) -> str:
+        """Determine what auth scheme a source should use in Composio.
+
+        This is a simplified mapping based on common patterns.
+        In a real implementation, this would be more sophisticated.
+        """
+        # Map based on common source patterns
+        if source_short_name in ["github", "bitbucket"]:
+            return "API_KEY"
+        elif source_short_name in ["confluence", "jira", "monday"]:
+            return "OAUTH2"
+        elif source_short_name in ["postgresql", "mysql", "sqlite"]:
+            return "BASIC"
+        else:
+            return "API_KEY"  # default

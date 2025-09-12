@@ -458,6 +458,9 @@ class SyncFactory:
             "source_model": source_model,
             "source_class": source_class,
             "config_fields": config_fields,  # From SourceConnection
+            "auth_fields": getattr(
+                source_connection_obj, "auth_fields", None
+            ),  # From SourceConnection
             "white_label_id": white_label_id,  # From SourceConnection
             "short_name": short_name,  # From SourceConnection
             "auth_config_class": auth_config_class,
@@ -529,6 +532,9 @@ class SyncFactory:
 
         # 5. Create the auth provider instance
         auth_provider_class = resource_locator.get_auth_provider(auth_provider_model)
+        logger.info(
+            f"🚨 [DEBUG] Creating auth provider instance: {auth_provider_class.__name__} for {readable_auth_provider_id}"
+        )
         auth_provider_instance = await auth_provider_class.create(
             credentials=decrypted_credentials,
             config=auth_provider_config,
@@ -610,7 +616,7 @@ class SyncFactory:
         auth_provider_instance: BaseAuthProvider,
         source_connection_data: dict,
     ) -> any:
-        """Get credentials from an auth provider instance."""
+        """Get credentials from an auth provider instance and combine with user-provided fields."""
         source_short_name = source_connection_data["short_name"]
 
         # Get the runtime auth fields required by the source (excluding BYOC fields)
@@ -628,16 +634,32 @@ class SyncFactory:
             )
 
         # Get fresh credentials from auth provider
-        fresh_credentials = await auth_provider_instance.get_creds_for_source(
+        auth_provider_credentials = await auth_provider_instance.get_creds_for_source(
             source_short_name=source_short_name,
             source_auth_config_fields=source_auth_config_fields,
         )
 
+        # Get user-provided auth fields (e.g., repo_name for GitHub)
+        user_auth_fields = source_connection_data.get("auth_fields")
+        if user_auth_fields:
+            # Convert ConfigValues to dict if needed
+            if hasattr(user_auth_fields, "model_dump"):
+                user_auth_fields_dict = user_auth_fields.model_dump()
+            else:
+                user_auth_fields_dict = user_auth_fields
+        else:
+            user_auth_fields_dict = {}
+
+        # Combine auth provider credentials with user-provided fields
+        combined_credentials = {**auth_provider_credentials, **user_auth_fields_dict}
+
         logger.debug(
-            f"Successfully obtained credentials from auth provider for source '{source_short_name}'"
+            f"Successfully obtained credentials from auth provider for source '{source_short_name}': "
+            f"auth_provider_fields={list(auth_provider_credentials.keys())}, "
+            f"user_fields={list(user_auth_fields_dict.keys())}"
         )
 
-        return fresh_credentials
+        return combined_credentials
 
     @classmethod
     async def _handle_auth_config_credentials(

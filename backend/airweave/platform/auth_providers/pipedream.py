@@ -108,6 +108,10 @@ class PipedreamAuthProvider(BaseAuthProvider):
         instance._access_token = None
         instance._token_expires_at = 0
 
+        # Initialize caching
+        instance._cache_ttl = 3600  # 1 hour
+        instance._auth_fields_cache = {}  # Cache for auth fields per app
+
         return instance
 
     def _get_pipedream_app_slug(self, airweave_short_name: str) -> str:
@@ -404,3 +408,182 @@ class PipedreamAuthProvider(BaseAuthProvider):
         )
 
         return found_credentials
+
+    async def can_handle_source(self, source_short_name: str) -> bool:
+        """Check if this auth provider can handle the given source.
+
+        This checks:
+        1. If the source has a mapping to a Pipedream app slug
+        2. If Pipedream supports this app (general support, not personal connections)
+        3. If the required auth fields can be provided
+
+        Args:
+            source_short_name: The source to check (e.g., 'github', 'slack')
+
+        Returns:
+            True if this provider can handle the source, False otherwise
+        """
+        try:
+            # Map Airweave source to Pipedream app slug
+            pipedream_slug = self._get_pipedream_app_slug(source_short_name)
+
+            # Check if we have a mapping for this source
+            if pipedream_slug not in self.SLUG_NAME_MAPPING.values():
+                self.logger.debug(f"No mapping found for source '{source_short_name}'")
+                return False
+
+            # Check if Pipedream supports this app (general support)
+            async with httpx.AsyncClient() as client:
+                try:
+                    # Get app details to check if it exists and is supported
+                    app_response = await self._get_with_auth(
+                        client,
+                        f"https://api.pipedream.com/v1/apps/{pipedream_slug}",
+                    )
+
+                    # Check if app exists and is supported
+                    if not app_response.get("data"):
+                        self.logger.debug(f"App '{pipedream_slug}' not found in Pipedream")
+                        return False
+
+                    # Check if we can provide the required auth fields
+                    return await self._can_provide_required_fields(
+                        source_short_name, pipedream_slug
+                    )
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self.logger.debug(f"App '{pipedream_slug}' not found in Pipedream")
+                        return False
+                    else:
+                        self.logger.error(f"HTTP error checking app '{pipedream_slug}': {e}")
+                        return False
+
+        except Exception as e:
+            self.logger.error(f"Error checking if can handle source '{source_short_name}': {e}")
+            return False
+
+    async def _get_pipedream_auth_fields(self, pipedream_slug: str) -> List[str]:
+        """Get available auth fields for a Pipedream app.
+
+        This calls Pipedream's API to get app details and auth fields.
+        """
+        # Check cache first
+        if pipedream_slug in self._auth_fields_cache:
+            cache_entry = self._auth_fields_cache[pipedream_slug]
+            if time.time() < cache_entry["expiry"]:
+                return cache_entry["fields"]
+
+        try:
+            async with httpx.AsyncClient() as client:
+                # Get app details which includes auth information
+                response = await self._get_with_auth(
+                    client,
+                    f"https://api.pipedream.com/v1/apps/{pipedream_slug}",
+                )
+
+                # Extract auth fields from the app response
+                fields = []
+                app_data = response.get("data", {})
+
+                # Check for OAuth fields
+                if app_data.get("oauth_client_id"):
+                    fields.append("oauth_client_id")
+                if app_data.get("oauth_client_secret"):
+                    fields.append("oauth_client_secret")
+                if app_data.get("oauth_access_token"):
+                    fields.append("oauth_access_token")
+                if app_data.get("oauth_refresh_token"):
+                    fields.append("oauth_refresh_token")
+
+                # Check for API key fields
+                if app_data.get("api_key"):
+                    fields.append("api_key")
+
+                # Add standard OAuth2 fields that Pipedream typically supports
+                if "oauth" in app_data.get("auth_type", "").lower():
+                    fields.extend(["client_id", "client_secret", "access_token", "refresh_token"])
+
+                # Cache the result
+                self._auth_fields_cache[pipedream_slug] = {
+                    "fields": fields,
+                    "expiry": time.time() + self._cache_ttl,
+                }
+
+                self.logger.info(f"Retrieved auth fields for {pipedream_slug}: {fields}")
+                return fields
+
+        except Exception as e:
+            self.logger.error(f"Error getting auth fields for {pipedream_slug}: {e}")
+            # Return empty list if API call fails
+            return []
+
+    async def _can_provide_required_fields(
+        self, source_short_name: str, pipedream_slug: str
+    ) -> bool:
+        """Check if we can provide the required auth fields for a source.
+
+        Args:
+            source_short_name: The Airweave source short name
+            pipedream_slug: The Pipedream app slug
+
+        Returns:
+            True if we can provide required fields, False otherwise
+        """
+        try:
+            # Get available auth fields from Pipedream
+            available_fields = await self._get_pipedream_auth_fields(pipedream_slug)
+
+            # Map Pipedream fields to Airweave field names
+            mapped_fields = [self._map_field_name(field) for field in available_fields]
+
+            # For now, assume we can provide basic OAuth2 fields
+            # In a more sophisticated implementation, we'd check against specific source
+            # requirements
+            required_fields = ["client_id", "client_secret", "access_token"]
+
+            # Check if we have all required fields
+            missing_fields = set(required_fields) - set(mapped_fields)
+
+            if missing_fields:
+                self.logger.debug(
+                    f"Missing required fields for {source_short_name}: {missing_fields}"
+                )
+                return False
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error checking required fields for {source_short_name}: {e}")
+            return False
+
+    async def _get_with_auth(self, client: httpx.AsyncClient, url: str) -> Dict[str, Any]:
+        """Make an authenticated request to Pipedream API.
+
+        Args:
+            client: HTTP client
+            url: URL to request
+
+        Returns:
+            JSON response data
+
+        Raises:
+            HTTPException: If request fails
+        """
+        # Ensure we have a valid token
+        access_token = await self._ensure_valid_token()
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Pipedream API error: {response.text}",
+            )
+
+        return response.json()
