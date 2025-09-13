@@ -73,13 +73,35 @@ class AuthProviderService:
                 f"BYOC-specific fields filtered: {list(byoc_specific_fields)}"
             )
         else:
-            # Not a BYOC source, return all fields
-            runtime_fields = all_fields
+            # Not a BYOC source, but we still need to filter out fields that should come from user config
+            # rather than auth providers (e.g., repo_name for GitHub)
+            config_only_fields = self._get_config_only_fields(source_short_name)
+            runtime_fields = [field for field in all_fields if field not in config_only_fields]
+
             auth_provider_logger.debug(
-                f"Source '{source_short_name}' is not BYOC - returning all fields: {all_fields}"
+                f"Source '{source_short_name}' is not BYOC - "
+                f"All fields: {all_fields}, Runtime fields: {runtime_fields}, "
+                f"Config-only fields filtered: {config_only_fields}"
             )
 
         return runtime_fields
+
+    def _get_config_only_fields(self, source_short_name: str) -> set:
+        """Get fields that should come from user config, not from auth providers.
+
+        Args:
+            source_short_name: The short name of the source
+
+        Returns:
+            Set of field names that should be excluded from auth provider requests
+        """
+        # Define fields that should come from user config rather than auth providers
+        config_only_fields_map = {
+            "github": {"repo_name"},  # GitHub repo name comes from user config
+            # Add other sources as needed
+        }
+
+        return config_only_fields_map.get(source_short_name, set())
 
     async def validate_auth_provider_config(
         self,

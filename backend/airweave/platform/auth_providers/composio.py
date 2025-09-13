@@ -23,8 +23,36 @@ class ComposioAuthProvider(BaseAuthProvider):
     # Mapping of Airweave field names to Composio field names
     # Key: Airweave field name, Value: Composio field name
     FIELD_NAME_MAPPING = {
+        # API Key sources
         "api_key": "generic_api_key",  # Stripe and other API key sources
-        # Add more mappings as needed
+        # GitHub specific
+        "personal_access_token": "access_token",
+        # OAuth specific
+        "access_token": "access_token",
+        "refresh_token": "refresh_token",
+        "client_id": "client_id",
+        "client_secret": "client_secret",
+        # Database specific (for sources that support DB connections)
+        "host": "host",
+        "port": "port",
+        "database": "database",
+        "user": "username",  # Note: different naming convention
+        "password": "password",
+        "schema": "schema",
+        "tables": "tables",
+        # Bitbucket specific
+        "username": "username",
+        "app_password": "app_password",
+        "workspace": "workspace",
+        "repo_slug": "repo_slug",
+        # CTTI specific
+        "username": "username",
+        "password": "password",
+        # Elasticsearch specific
+        "host": "host",
+        "port": "port",
+        "indices": "indices",
+        "fields": "fields",
     }
 
     # Mapping of Airweave source short names to Composio toolkit slugs

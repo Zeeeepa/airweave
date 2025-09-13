@@ -343,11 +343,53 @@ class SyncFactory:
             # Source has an auth config class and credentials are a dict
             # This happens with auth providers - convert dict to config object
             try:
-                auth_config_class = resource_locator.get_auth_config(auth_config_class_name)
-                source_credentials = auth_config_class.model_validate(source_credentials)
+                # Add this right before line 347
+                logger.info("�� DEBUG: About to validate auth credentials")
+                logger.info(f"🔍 DEBUG: auth_config_class_name: {auth_config_class_name}")
                 logger.info(
-                    f"Converted auth provider credentials to {auth_config_class_name} object"
+                    f"🔍 DEBUG: source_credentials keys: {list(source_credentials.keys()) if isinstance(source_credentials, dict) else 'Not a dict'}"
                 )
+                logger.info(f"🔍 DEBUG: source_credentials: {source_credentials}")
+                logger.info(f"🔍 DEBUG: source_credentials type: {type(source_credentials)}")
+                logger.info(
+                    f"🔍 DEBUG: source_connection_data keys: {list(source_connection_data.keys())}"
+                )
+                logger.info(
+                    f"🔍 DEBUG: auth_fields: {source_connection_data.get('auth_fields', {})}"
+                )
+                logger.info(
+                    f"🔍 DEBUG: config_fields: {source_connection_data.get('config_fields', {})}"
+                )
+
+                auth_config_class = resource_locator.get_auth_config(auth_config_class_name)
+                logger.info(f"🔍 DEBUG: auth_config_class: {auth_config_class}")
+                logger.info(
+                    f"🔍 DEBUG: auth_config_class fields: {list(auth_config_class.model_fields.keys()) if hasattr(auth_config_class, 'model_fields') else 'No model_fields'}"
+                )
+
+                # Check if repo_name is required in the model
+                if (
+                    hasattr(auth_config_class, "model_fields")
+                    and "repo_name" in auth_config_class.model_fields
+                ):
+                    repo_field_info = auth_config_class.model_fields["repo_name"]
+                    logger.info(f"🔍 DEBUG: repo_name field info: {repo_field_info}")
+                    logger.info(
+                        f"🔍 DEBUG: repo_name is_required: {getattr(repo_field_info, 'is_required', 'unknown')}"
+                    )
+                    logger.info(
+                        f"🔍 DEBUG: repo_name default: {getattr(repo_field_info, 'default', 'no default')}"
+                    )
+                try:
+                    source_credentials = auth_config_class.model_validate(source_credentials)
+                    logger.info(f"🔍 DEBUG: Validation successful! Result: {source_credentials}")
+                    logger.info(
+                        f"Converted auth provider credentials to {auth_config_class_name} object"
+                    )
+                except Exception as e:
+                    logger.error(f"🔍 DEBUG: Validation failed with error: {e}")
+                    logger.error(f"🔍 DEBUG: Error type: {type(e)}")
+                    raise
             except Exception as e:
                 logger.error(f"Failed to convert credentials to auth config object: {e}")
                 raise

@@ -93,10 +93,32 @@ class GitHubSource(BaseSource):
         """
         instance = cls()
 
-        instance.personal_access_token = credentials.personal_access_token
-        instance.repo_name = credentials.repo_name
+        # 🔍 DEBUG: GitHub create method debugging
+        print(f"🔍 DEBUG: GitHub.create called with credentials: {credentials}")
+        print(f"🔍 DEBUG: GitHub.create called with config: {config}")
+        print(
+            f"🔍 DEBUG: credentials.repo_name: {getattr(credentials, 'repo_name', 'NO REPO_NAME ATTRIBUTE')}"
+        )
+        print(f"🔍 DEBUG: config type: {type(config)}")
+        print(f"🔍 DEBUG: config keys: {list(config.keys()) if config else 'None'}")
 
-        instance.branch = config.get("branch", None)
+        instance.personal_access_token = credentials.personal_access_token
+
+        if credentials.repo_name:
+            # Direct Auth (No Auth Provider)
+            print(f"🔍 DEBUG: Using repo_name from credentials: {credentials.repo_name}")
+            instance.repo_name = credentials.repo_name
+        else:
+            # Auth Provider Flow
+            print("🔍 DEBUG: Getting repo_name from config")
+            instance.repo_name = config.get("repo_name", None) if config else None
+            print(f"🔍 DEBUG: repo_name from config: {instance.repo_name}")
+            if not instance.repo_name:
+                raise ValueError("Repository name must be specified")
+
+        instance.branch = config.get("branch", None) if config else None
+        print(f"🔍 DEBUG: Final repo_name: {instance.repo_name}")
+        print(f"🔍 DEBUG: Final branch: {instance.branch}")
 
         instance.max_file_size = config.get("max_file_size", 10 * 1024 * 1024)
 

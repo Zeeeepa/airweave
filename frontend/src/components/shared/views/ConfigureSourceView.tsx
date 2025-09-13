@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { useAuthProvidersStore } from "@/lib/stores/authProviders";
 import { getAuthProviderIconUrl } from "@/lib/utils/icons";
 import { ExternalLink } from "lucide-react";
+import { hasCompatibleAuthProviders } from "@/lib/auth-provider-compatibility";
 
 export interface ConfigureSourceViewProps {
     onNext?: (data?: any) => void;
@@ -57,17 +58,6 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
         viewData.credentialId || null
     );
 
-    // Sources that are temporarily blocked from using auth providers
-    // This should match the backend list in source_connections.py
-    const SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
-        "confluence",
-        "jira",
-        "bitbucket",
-        "github",
-        "ctti",
-        "monday",
-        "postgresql"
-    ];
 
     // Use auth providers store
     const {
@@ -162,9 +152,9 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
         fetchAuthProviderConnections();
     }, [fetchAuthProviderConnections]);
 
-    // Ensure external auth provider is disabled for blocked sources
+    // Ensure external auth provider is disabled for sources without compatible auth providers
     useEffect(() => {
-        if (sourceShortName && SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceShortName)) {
+        if (sourceShortName && !hasCompatibleAuthProviders(sourceShortName)) {
             setUseExternalAuthProvider(false);
             setSelectedAuthProviderConnection(null);
             setAuthProviderDetails(null);
@@ -849,7 +839,7 @@ export const ConfigureSourceView: React.FC<ConfigureSourceViewProps> = ({
                 </div>
 
                 {/* External Auth Provider Toggle - Separate Section */}
-                {!SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceShortName) && (
+                {sourceShortName && hasCompatibleAuthProviders(sourceShortName) && (
                     <div className="bg-muted p-6 rounded-lg mb-4">
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">

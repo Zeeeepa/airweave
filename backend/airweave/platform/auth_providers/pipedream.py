@@ -33,23 +33,41 @@ class PipedreamAuthProvider(BaseAuthProvider):
     # Pipedream OAuth token endpoint
     TOKEN_ENDPOINT = "https://api.pipedream.com/v1/oauth/token"
 
-    BLOCKED_SOURCES = [
-        "confluence",
-        "jira",
-        "bitbucket",
-        "github",
-        "ctti",
-    ]
+    # BLOCKED_SOURCES removed - all sources are now supported via compatibility matrix
 
     # Mapping of Airweave field names to Pipedream field names
     # Key: Airweave field name, Value: Pipedream field name
     FIELD_NAME_MAPPING = {
+        # API Key sources
         "api_key": "api_key",
+        # OAuth specific
         "access_token": "oauth_access_token",
         "refresh_token": "oauth_refresh_token",
         "client_id": "oauth_client_id",
         "client_secret": "oauth_client_secret",
-        # Add more mappings as discovered
+        # GitHub specific
+        "personal_access_token": "oauth_access_token",  # GitHub PAT maps to oauth_access_token in Pipedream
+        # Database specific
+        "host": "host",
+        "port": "port",
+        "database": "database",
+        "user": "user",  # Pipedream uses "user" not "username"
+        "password": "password",
+        "schema": "schema",
+        "tables": "tables",
+        # Bitbucket specific
+        "username": "username",
+        "app_password": "app_password",
+        "workspace": "workspace",
+        "repo_slug": "repo_slug",
+        # CTTI specific
+        "username": "username",
+        "password": "password",
+        # Elasticsearch specific
+        "host": "host",
+        "port": "port",
+        "indices": "indices",
+        "fields": "fields",
     }
 
     # Mapping of Airweave source short names to Pipedream app names
