@@ -344,6 +344,12 @@ export const SearchProcess: React.FC<SearchProcessProps> = ({ requestId, events,
                     const text = (event as any).text;
                     if (typeof text === 'string' && text.trim()) {
                         interpretationData.reasons.push(text.trim());
+                        // Show reasoning step immediately
+                        rows.push(
+                            <div key={`interp-reason-${i}-${interpretationData.reasons.length}`} className="py-0.5 px-2 text-[11px] opacity-80">
+                                {text.trim()}
+                            </div>
+                        );
                     }
                     continue;
                 }
@@ -373,14 +379,7 @@ export const SearchProcess: React.FC<SearchProcessProps> = ({ requestId, events,
                     // Render the aggregated interpretation block
                     const key = `interp-${i}`;
 
-                    // Reasoning steps
-                    interpretationData.reasons.forEach((reason, idx) => {
-                        rows.push(
-                            <div key={`${key}-reason-${idx}`} className="py-0.5 px-2 text-[11px] opacity-80">
-                                {reason}
-                            </div>
-                        );
-                    });
+                    // Reasoning steps are now shown immediately, so we don't need to render them again here
 
                     // Confidence and application state
                     if (typeof interpretationData.confidence === 'number') {
@@ -486,6 +485,12 @@ export const SearchProcess: React.FC<SearchProcessProps> = ({ requestId, events,
                     const text = (event as any).text;
                     if (typeof text === 'string' && text.trim()) {
                         expansionData.reasons.push(text.trim());
+                        // Show reasoning step immediately
+                        rows.push(
+                            <div key={`exp-reason-${i}-${expansionData.reasons.length}`} className="py-0.5 px-2 text-[11px] opacity-80">
+                                {text.trim()}
+                            </div>
+                        );
                     }
                     continue;
                 }
@@ -519,14 +524,7 @@ export const SearchProcess: React.FC<SearchProcessProps> = ({ requestId, events,
                         );
                     }
 
-                    // Reasoning steps
-                    expansionData.reasons.forEach((reason, idx) => {
-                        rows.push(
-                            <div key={`${key}-reason-${idx}`} className="py-0.5 px-2 text-[11px] opacity-80">
-                                {reason}
-                            </div>
-                        );
-                    });
+                    // Reasoning steps are now shown immediately, so we don't need to render them again here
 
                     // Generated alternatives
                     if (expansionData.alternatives.length > 0) {
